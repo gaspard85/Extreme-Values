@@ -50,8 +50,6 @@ n_obs
 n_ans
 ```
 
-Ce document présente une première analyse EVT des précipitations quotidiennes observées à la station ST MAURICE-NAVACELLE. La variable étudiée est la hauteur quotidienne de précipitations, notée `RR`.
-
 # Présentation et statistiques descriptives
 
 ```{r descriptif-global}
@@ -62,8 +60,6 @@ resume_rr
 ecart_type
 
 ```
-
-On distingue également les jours pluvieux, c'est-à-dire les jours pour lesquels la précipitation est strictement positive.
 
 ```{r jours-pluvieux}
 # Jours avec précipitations strictement positives
@@ -83,8 +79,6 @@ summary(jours_pluie$RR)
 skewness(jours_pluie$RR)
 kurtosis(jours_pluie$RR)
 ```
-
-Les plus fortes valeurs observées permettent de repérer les événements les plus extrêmes de la série.
 
 ```{r top-10}
 # Classement des données par précipitation décroissante
@@ -150,8 +144,6 @@ boxplot(
 
 # Approche Block Maxima : ajustement GEV
 
-L'approche des maxima par blocs consiste ici à extraire, pour chaque année, le maximum annuel de précipitations quotidiennes. Ces maxima annuels sont ensuite modélisés par une loi GEV.
-
 ```{r maxima-annuels}
 # Maximum annuel des précipitations
 maxima <- aggregate(RR ~ ANNEE, data = data_smn, max)
@@ -179,7 +171,6 @@ modele <- lm(MAX_RR ~ ANNEE, data = maxima)
 abline(modele, col = "red", lwd = 2)
 ```
 
-
 ## Ajustement de la loi GEV
 
 ```{r ajustement-gev}
@@ -197,9 +188,6 @@ xi_gev    <- gev_fit$results$par["shape"]
 c(mu = mu_gev, sigma = sigma_gev, xi = xi_gev)
 ```
 
-Le paramètre de forme estimé est légèrement positif mais proche de zéro. Cela suggère un comportement proche du cas de Gumbel, avec une légère tendance à la présence d’événements extrêmes importants.
-
-
 ## Diagnostics graphiques GEV
 
 ```{r diagnostics-gev, fig.width=7, fig.height=7}
@@ -211,8 +199,6 @@ plot(gev_fit, type = "rl", main = "Niveaux de retour GEV")
 
 par(mfrow = c(1, 1))
 ```
-
-Le QQ-plot montre que les quantiles empiriques sont globalement proches des quantiles théoriques de la loi GEV ajustée. L’ajustement paraît satisfaisant pour la majorité des observations, même si quelques écarts apparaissent pour les valeurs les plus extrêmes
 
 ## Niveaux de retour GEV
 
@@ -236,11 +222,7 @@ rl_gev_df
 
 # Approche Peaks Over Threshold : ajustement GPD
 
-L'approche POT consiste à conserver toutes les observations dépassant un seuil élevé \(u\), puis à ajuster une loi GPD aux excès au-dessus de ce seuil.
-
 ## Choix du seuil
-
-Le choix du seuil est une étape délicate. On utilise d'abord le mean residual life plot, puis un graphique de stabilité des paramètres.
 
 ```{r mean-residual-life, fig.width=7, fig.height=5}
 # Graphique d'aide au choix du seuil
@@ -256,8 +238,6 @@ title(main = "Mean Residual Life Plot")
 gpd.fitrange(data_smn$RR, umin = 20, umax = 100, nint = 20)
 ```
 
-Le seuil suivant est fixé comme valeur de départ. Il devra être confirmé graphiquement à partir des deux diagnostics précédents.
-
 ```{r seuil-pot}
 # Seuil retenu pour l'approche POT
 u <- 50
@@ -272,8 +252,6 @@ lambda
 ```
 
 ## Déclustering des dépassements
-
-Dans le cas des précipitations, plusieurs dépassements proches dans le temps peuvent appartenir au même épisode pluvieux. Pour limiter la dépendance temporelle entre excès, on applique un déclustering simple : deux événements séparés de plus de 3 jours sont considérés comme appartenant à des épisodes différents, puis on garde le maximum de chaque épisode.
 
 ```{r declustering}
 # Données dépassant le seuil
@@ -318,8 +296,6 @@ xi_gpd    <- gpd_fit$results$par["shape"]
 c(sigma = sigma_gpd, xi = xi_gpd)
 ```
 
-Le paramètre de forme GPD estimé est proche de zéro : cela suggère un comportement proche du cas exponentiel.
-
 ## Diagnostics graphiques GPD
 
 ```{r diagnostics-gpd, fig.width=7, fig.height=7}
@@ -347,8 +323,6 @@ rl_gpd_df
 ```
 
 # Estimateur de Hill
-
-L'estimateur de Hill est adapté aux distributions à queue lourde, c'est-à-dire au cas \(\xi > 0\). Il permet d'estimer l'indice de queue à partir des plus grandes observations.
 
 ```{r hill-plot}
 # Données positives triées
@@ -446,17 +420,3 @@ legend(
   pch = c(16, 16, NA)
 )
 ```
-
-# Discussion des limites
-
-Cette analyse repose sur plusieurs choix méthodologiques importants :
-
-- la station étudiée ;
-- la période d'observation disponible ;
-- le choix de la taille des blocs pour l'approche GEV ;
-- le choix du seuil pour l'approche POT ;
-- le déclustering des épisodes pluvieux ;
-- l'hypothèse d'indépendance des événements extrêmes ;
-- la stabilité temporelle du climat sur la période étudiée.
-
-Ces points devront être discutés dans le rapport final, en particulier lorsque l'on interprète des niveaux de retour très élevés comme les niveaux centennaux ou bicentennaux.
