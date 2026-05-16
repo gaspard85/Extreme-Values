@@ -1,0 +1,462 @@
+---
+title: "Analyse des valeurs extrêmes — Précipitations journalières"
+author: "Gaspard Teston"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+# Packages et chargement des données
+
+```{r packages}
+# Chargement des packages utiles pour l'analyse
+library(dplyr)      # manipulation des données
+library(lubridate)  # gestion des dates
+library(moments)    # skewness et kurtosis
+library(extRemes)   # modèles GEV et GPD
+library(ismev)      # outils graphiques EVT
+```
+
+```{r chargement-donnees}
+
+# Importation des données
+data_raw <- read.csv2("Q_34_previous-1950-2024_RR-T-Vent.csv")
+
+# Station étudiée
+station_choisie <- "ST MAURICE-NAVACELLE"
+
+# On garde seulement les données de la station choisie
+data_smn <- data_raw[data_raw$NOM_USUEL == station_choisie, ]
+
+# Création des variables utiles
+data_smn$DATE <- as.Date(as.character(data_smn$AAAAMMJJ), format = "%Y%m%d")
+data_smn$ANNEE <- year(data_smn$DATE)
+data_smn$MOIS <- month(data_smn$DATE)
+data_smn$RR <- as.numeric(data_smn$RR)
+
+# On enlève les lignes sans précipitation renseignée
+data_smn <- data_smn[!is.na(data_smn$RR), ]
+
+# Résumé de la base nettoyée
+periode <- paste(format(min(data_smn$DATE)), "--", format(max(data_smn$DATE)))
+n_obs <- nrow(data_smn)
+n_ans <- length(unique(data_smn$ANNEE))
+
+periode
+n_obs
+n_ans
+```
+
+Ce document présente une première analyse EVT des précipitations quotidiennes observées à la station ST MAURICE-NAVACELLE. La variable étudiée est la hauteur quotidienne de précipitations, notée `RR`.
+
+# Présentation et statistiques descriptives
+
+```{r descriptif-global}
+resume_rr <- summary(data_smn$RR)
+ecart_type <- sd(data_smn$RR)
+
+resume_rr
+ecart_type
+
+```
+
+On distingue également les jours pluvieux, c'est-à-dire les jours pour lesquels la précipitation est strictement positive.
+
+```{r jours-pluvieux}
+# Jours avec précipitations strictement positives
+jours_pluie <- data_smn[data_smn$RR > 0, ]
+
+# Nombre de jours pluvieux
+n_jours_pluie <- nrow(jours_pluie)
+
+# Proportion de jours pluvieux
+prop_jours_pluie <- 100 * n_jours_pluie / nrow(data_smn)
+
+n_jours_pluie
+prop_jours_pluie
+
+# Quelques statistiques descriptives
+summary(jours_pluie$RR)
+skewness(jours_pluie$RR)
+kurtosis(jours_pluie$RR)
+```
+
+Les plus fortes valeurs observées permettent de repérer les événements les plus extrêmes de la série.
+
+```{r top-10}
+# Classement des données par précipitation décroissante
+data_classe <- data_smn[order(data_smn$RR, decreasing = TRUE), ]
+
+# Sélection des 10 premières lignes
+top10 <- data_classe[1:10, c("DATE", "RR")]
+
+# Remise des indices de 1 à 10
+row.names(top10) <- 1:10
+
+top10
+```
+
+# Analyse exploratoire
+
+## Série temporelle des précipitations quotidiennes
+
+```{r serie-temporelle}
+plot(
+  data_smn$DATE,
+  data_smn$RR,
+  type = "l",
+  xlab = "Date",
+  ylab = "Précipitations (mm)",
+  main = "Précipitations quotidiennes"
+)
+```
+
+## Histogramme des jours pluvieux
+
+```{r histogramme-pluie}
+hist(
+  log10(jours_pluie$RR),#lisibilté des grandes valeurs plus rares
+  breaks = 50,
+  main = "Distribution des précipitations les jours pluvieux",
+  xlab = "Précipitations (mm, échelle logarithmique)",
+  ylab = "Fréquence",
+  xaxt = "n"
+)
+
+axis(1, at = log10(c(0.1, 1, 10, 100)),  labels = c("0.1", "1", "10", "100"))
+```
+
+## Répartition mensuelle
+
+```{r boxplot-mensuel}
+boxplot(
+  RR ~ MOIS,
+  data = jours_pluie,
+  main = "Répartition mensuelle des précipitations",
+  xlab = "Mois",
+  ylab = "Précipitations (mm)"
+)
+
+boxplot(
+  jours_pluie$RR,
+  main = "Boxplot des précipitations",
+  ylab = "Précipitations (mm)"
+)
+
+```
+
+# Approche Block Maxima : ajustement GEV
+
+L'approche des maxima par blocs consiste ici à extraire, pour chaque année, le maximum annuel de précipitations quotidiennes. Ces maxima annuels sont ensuite modélisés par une loi GEV.
+
+```{r maxima-annuels}
+# Maximum annuel des précipitations
+maxima <- aggregate(RR ~ ANNEE, data = data_smn, max)
+
+# Renommage de la colonne
+colnames(maxima)[2] <- "MAX_RR"
+
+summary(maxima$MAX_RR)
+head(maxima)
+```
+
+```{r graphique-maxima-annuels}
+plot(
+  maxima$ANNEE,
+  maxima$MAX_RR,
+  type = "h",
+  lwd = 5,
+  xlab = "Année",
+  ylab = "Maximum annuel (mm)",
+  main = "Maxima annuels des précipitations"
+)
+
+# Droite de tendance
+modele <- lm(MAX_RR ~ ANNEE, data = maxima)
+abline(modele, col = "red", lwd = 2)
+```
+
+
+## Ajustement de la loi GEV
+
+```{r ajustement-gev}
+# Ajustement d'une loi GEV aux maxima annuels
+gev_fit <- fevd(maxima$MAX_RR, type = "GEV")
+
+summary(gev_fit)
+```
+
+```{r parametres-gev}
+mu_gev    <- gev_fit$results$par["location"]
+sigma_gev <- gev_fit$results$par["scale"]
+xi_gev    <- gev_fit$results$par["shape"]
+
+c(mu = mu_gev, sigma = sigma_gev, xi = xi_gev)
+```
+
+Le paramètre de forme estimé est légèrement positif mais proche de zéro. Cela suggère un comportement proche du cas de Gumbel, avec une légère tendance à la présence d’événements extrêmes importants.
+
+
+## Diagnostics graphiques GEV
+
+```{r diagnostics-gev, fig.width=7, fig.height=7}
+# Diagnostics graphiques du modèle GEV
+par(mfrow = c(2, 1))
+
+plot(gev_fit, type = "qq", main = "QQ-plot GEV")
+plot(gev_fit, type = "rl", main = "Niveaux de retour GEV")
+
+par(mfrow = c(1, 1))
+```
+
+Le QQ-plot montre que les quantiles empiriques sont globalement proches des quantiles théoriques de la loi GEV ajustée. L’ajustement paraît satisfaisant pour la majorité des observations, même si quelques écarts apparaissent pour les valeurs les plus extrêmes
+
+## Niveaux de retour GEV
+
+```{r retour-gev}
+# Périodes de retour étudiées
+periodes <- c(2, 5, 10, 20, 50, 100)
+
+# Calcul des niveaux de retour
+retour_gev <- ci(gev_fit,return.period = periodes,type = "return.level")
+
+# Tableau des résultats
+rl_gev_df <- data.frame(
+  Periode = periodes,
+  Niveau = round(retour_gev[, "Estimate"], 1),
+  IC_inf_95 = round(retour_gev[, "95% lower CI"], 1),
+  IC_sup_95 = round(retour_gev[, "95% upper CI"], 1)
+)
+
+rl_gev_df
+```
+
+# Approche Peaks Over Threshold : ajustement GPD
+
+L'approche POT consiste à conserver toutes les observations dépassant un seuil élevé \(u\), puis à ajuster une loi GPD aux excès au-dessus de ce seuil.
+
+## Choix du seuil
+
+Le choix du seuil est une étape délicate. On utilise d'abord le mean residual life plot, puis un graphique de stabilité des paramètres.
+
+```{r mean-residual-life, fig.width=7, fig.height=5}
+# Graphique d'aide au choix du seuil
+
+mrl.plot(data_smn$RR)
+
+title(main = "Mean Residual Life Plot")
+```
+
+```{r stability-gpd, fig.width=7, fig.height=5}
+# Stabilité des paramètres selon le seuil choisi
+
+gpd.fitrange(data_smn$RR, umin = 20, umax = 100, nint = 20)
+```
+
+Le seuil suivant est fixé comme valeur de départ. Il devra être confirmé graphiquement à partir des deux diagnostics précédents.
+
+```{r seuil-pot}
+# Seuil retenu pour l'approche POT
+u <- 50
+
+excedances <- data_smn[data_smn$RR > u, ]
+
+n_excedances <- nrow(excedances)
+lambda <- n_excedances / n_ans
+
+n_excedances
+lambda
+```
+
+## Déclustering des dépassements
+
+Dans le cas des précipitations, plusieurs dépassements proches dans le temps peuvent appartenir au même épisode pluvieux. Pour limiter la dépendance temporelle entre excès, on applique un déclustering simple : deux événements séparés de plus de 3 jours sont considérés comme appartenant à des épisodes différents, puis on garde le maximum de chaque épisode.
+
+```{r declustering}
+# Données dépassant le seuil
+data_exc <- data_smn[data_smn$RR > u, ]
+
+# Différence de temps entre deux dépassements
+gap <- c(0,diff(data_exc$DATE))
+
+# Création des clusters
+cluster <- cumsum(gap > 3)
+
+# Ajout du numéro de cluster
+data_exc$cluster <- cluster
+
+# Maximum de chaque épisode pluvieux
+data_exc <- aggregate(RR ~ cluster, data = data_exc, max)
+
+# Nombre d'excès retenus
+n_exc <- nrow(data_exc)
+
+# Nombre moyen d'excès par an
+lambda <- n_exc / n_ans
+
+head(data_exc)
+n_exc
+lambda
+```
+
+## Ajustement de la loi GPD
+
+```{r ajustement-gpd}
+# Ajustement d'une loi GPD aux excès
+gpd_fit <- fevd(data_exc$RR, threshold = u, type = "GP")
+
+summary(gpd_fit)
+```
+
+```{r parametres-gpd}
+sigma_gpd <- gpd_fit$results$par["scale"]
+xi_gpd    <- gpd_fit$results$par["shape"]
+
+c(sigma = sigma_gpd, xi = xi_gpd)
+```
+
+Le paramètre de forme GPD estimé est proche de zéro : cela suggère un comportement proche du cas exponentiel.
+
+## Diagnostics graphiques GPD
+
+```{r diagnostics-gpd, fig.width=7, fig.height=7}
+par(mfrow = c(2, 1))
+plot(gpd_fit, type = "qq", main = "QQ-plot GPD")
+plot(gpd_fit, type = "rl", main = "Niveaux de retour GPD")
+par(mfrow = c(1, 1))
+```
+
+## Niveaux de retour GPD
+
+```{r retour-gpd}
+# Niveaux de retour pour la loi GPD
+retour_gpd <- ci(gpd_fit,return.period = periodes,type = "return.level")
+
+# Tableau des résultats
+rl_gpd_df <- data.frame(
+  Periode = periodes,
+  Niveau = round(retour_gpd[, "Estimate"], 1),
+  IC_inf_95 = round(retour_gpd[, "95% lower CI"], 1),
+  IC_sup_95 = round(retour_gpd[, "95% upper CI"], 1)
+)
+
+rl_gpd_df
+```
+
+# Estimateur de Hill
+
+L'estimateur de Hill est adapté aux distributions à queue lourde, c'est-à-dire au cas \(\xi > 0\). Il permet d'estimer l'indice de queue à partir des plus grandes observations.
+
+```{r hill-plot}
+# Données positives triées
+x_hill <- sort(jours_pluie$RR)
+
+n <- length(x_hill)
+
+# Nombre de valeurs extrêmes utilisées
+k_values <- 5:300
+
+# Calcul de l'estimateur de Hill
+hill_values <- numeric(length(k_values))
+
+for(i in 1:length(k_values)) {
+
+  k <- k_values[i]
+
+  seuil <- x_hill[n - k]
+
+  extremes <- x_hill[(n - k + 1):n]
+
+  hill_values[i] <- mean(log(extremes) - log(seuil))
+}
+
+# Graphique de Hill
+plot(
+  k_values,
+  hill_values,
+  type = "l",
+  lwd = 2,
+  xlab = "Nombre de valeurs extrêmes",
+  ylab = "Estimateur de Hill",
+  main = "Hill plot"
+)
+```
+
+```{r hill-valeur}
+# Choix d'une valeur de k après lecture du graphique
+k_hill <- 50
+
+# Valeur de l'estimateur de Hill pour ce k
+xi_hill <- hill_values[k_values == k_hill]
+
+xi_hill
+```
+
+# Comparaison des niveaux de retour GEV et GPD
+
+```{r comparaison-retour}
+# Comparaison des niveaux de retour GEV et GPD
+comp_df <- data.frame(
+  Periode = periodes,
+  GEV = rl_gev_df$Niveau,
+  GPD = rl_gpd_df$Niveau
+)
+
+comp_df
+```
+
+```{r graphique-comparaison-retour}
+plot(
+  periodes,
+  rl_gev_df$Niveau,
+  type = "b",
+  pch = 16,
+  lwd = 2,
+  col = "red",
+  log = "x",
+  ylim = range(
+    rl_gev_df$IC_inf_95, rl_gev_df$IC_sup_95,
+    rl_gpd_df$IC_inf_95, rl_gpd_df$IC_sup_95
+  ),
+  xaxt = "n",
+  xlab = "Période de retour",
+  ylab = "Précipitations (mm)",
+  main = "Comparaison des niveaux de retour GEV / GPD"
+)
+
+axis(1, at = periodes, labels = paste(periodes, "ans"))
+
+lines(periodes, rl_gpd_df$Niveau, type = "b", pch = 16, lwd = 2, col = "blue")
+
+lines(periodes, rl_gev_df$IC_inf_95, col = "red", lty = 2)
+lines(periodes, rl_gev_df$IC_sup_95, col = "red", lty = 2)
+
+lines(periodes, rl_gpd_df$IC_inf_95, col = "blue", lty = 2)
+lines(periodes, rl_gpd_df$IC_sup_95, col = "blue", lty = 2)
+
+legend(
+  "topleft",
+  legend = c("GEV", "GPD", "Intervalles de confiance"),
+  col = c("red", "blue", "black"),
+  lwd = c(2, 2, 1),
+  lty = c(1, 1, 2),
+  pch = c(16, 16, NA)
+)
+```
+
+# Discussion des limites
+
+Cette analyse repose sur plusieurs choix méthodologiques importants :
+
+- la station étudiée ;
+- la période d'observation disponible ;
+- le choix de la taille des blocs pour l'approche GEV ;
+- le choix du seuil pour l'approche POT ;
+- le déclustering des épisodes pluvieux ;
+- l'hypothèse d'indépendance des événements extrêmes ;
+- la stabilité temporelle du climat sur la période étudiée.
+
+Ces points devront être discutés dans le rapport final, en particulier lorsque l'on interprète des niveaux de retour très élevés comme les niveaux centennaux ou bicentennaux.
